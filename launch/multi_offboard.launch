@@ -1,0 +1,3 @@
+<launch>
+    <node pkg = "offboard" name = "multi_offboard" type="multi_offboard" output="screen"/>
+</launch>
