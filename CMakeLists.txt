@@ -121,6 +121,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
+include_directories( "/usr/include/eigen3" )
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
 #   src/${PROJECT_NAME}/offboard.cpp
@@ -128,7 +129,9 @@ include_directories(
 add_executable(offboard src/offboard.cpp)
 target_link_libraries(offboard ${catkin_LIBRARIES})
 
-add_executable(multi_offboard  src/multi_offboard.cpp)
+add_executable(multi_offboard   src/multi_offboard.cpp
+                                src/PathCreator.cpp
+                                src/FlightManager.cpp )
 target_link_libraries(multi_offboard ${catkin_LIBRARIES})
 
 ## Add cmake target dependencies of the library

@@ -15,10 +15,20 @@
 #include <sensor_msgs/NavSatFix.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <string.h>
+#include <Eigen/Core>
+#include <vector>       // std::vector
+#include <algorithm>    // std::reverse
 
 using namespace std;
+using namespace Eigen;
 class MultiOffboard {
 public:
+    enum  {
+        TAKEOFF,
+        WAYPOINT,
+        LAND
+    };
+
     ~MultiOffboard() {};
     void vrf_hud_cb(const mavros_msgs::VFR_HUD::ConstPtr& msg);
 
@@ -34,6 +44,7 @@ public:
     bool pos_reached(geometry_msgs::PoseStamped current_pos, geometry_msgs::PoseStamped target_pos);
     void Oninit();
     void targte_local_pos();
+    void add_way_points();
 
     mavros_msgs::State uav1_current_state;
     mavros_msgs::State uav2_current_state;
@@ -49,7 +60,6 @@ public:
     geometry_msgs::PoseStamped uav2_target_pose;
     geometry_msgs::PoseStamped uav3_target_pose;
     geometry_msgs::PoseStamped uav4_target_pose;
-    float curr_altitude;
 
     ros::NodeHandle nh;
     ros::Subscriber uav1_local_position_sub;
@@ -80,6 +90,14 @@ public:
     ros::ServiceClient uav4_arming_client;
     ros::Publisher uav4_local_pos_pub;
 
+    bool is_offboard = false;
+    ros::Time last_request_;
+private:
+
+    float curr_altitude;
+    int state_ = TAKEOFF;
+    geometry_msgs::PoseStamped target_pos_;
+    vector<geometry_msgs::PoseStamped> way_points;
 };
 
 #endif //OFFBOARD_MULTI_OFFBOARD_HPP

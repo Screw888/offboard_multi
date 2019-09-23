@@ -52,32 +52,100 @@ bool MultiOffboard::pos_reached(geometry_msgs::PoseStamped current_pos, geometry
     float err_py = current_pos.pose.position.y - target_pos.pose.position.y;
     float err_pz = current_pos.pose.position.z - target_pos.pose.position.z;
 
-    return sqrt(err_px * err_px + err_py * err_py + err_pz * err_pz) > 1.0f;
+    return sqrt(err_px * err_px + err_py * err_py + err_pz * err_pz) < 0.8f;
+}
+
+void MultiOffboard::add_way_points() {
+    geometry_msgs::PoseStamped way_point;
+
+    way_point.pose.position.x = 0;
+    way_point.pose.position.y = 0;
+    way_point.pose.position.z = 15;
+    way_points.push_back(way_point);
+
+    way_point.pose.position.x = 30;
+    way_point.pose.position.y = -30;
+    way_point.pose.position.z = 15;
+    way_points.push_back(way_point);
+
+    way_point.pose.position.x = 30;
+    way_point.pose.position.y = 40;
+    way_point.pose.position.z = 15;
+    way_points.push_back(way_point);
+
+    way_point.pose.position.x = -30;
+    way_point.pose.position.y = 40;
+    way_point.pose.position.z = 15;
+    way_points.push_back(way_point);
+
+    std::reverse(way_points.begin(), way_points.end());
 }
 
 void MultiOffboard::targte_local_pos() {
-    // uav2 is the head drone.
-    uav2_target_pose.pose.position.x = uav2_current_local_pos.pose.position.x;
-    uav2_target_pose.pose.position.y = uav2_current_local_pos.pose.position.y;
-    uav2_target_pose.pose.position.z = 3;
+    if (uav2_current_state.mode == "OFFBOARD") {
+        switch (state_) {
+            // takeoff
+            case TAKEOFF:
+                target_pos_.pose.position.x = 0;
+                target_pos_.pose.position.y = 0;
+                target_pos_.pose.position.z = 3;
 
-    uav1_target_pose.pose.position.x = uav2_target_pose.pose.position.x;
-    uav1_target_pose.pose.position.y = uav2_target_pose.pose.position.y;
-    uav1_target_pose.pose.position.z = uav2_current_local_pos.pose.position.z;
+                if (pos_reached(uav2_current_local_pos, target_pos_)){
+                    state_ = WAYPOINT;
+                    add_way_points();
+                    ROS_INFO("Finish takeoff");
+                }
+                break;
 
-    uav3_target_pose.pose.position.x = uav2_target_pose.pose.position.x;
-    uav3_target_pose.pose.position.y = uav2_target_pose.pose.position.y;
-    uav3_target_pose.pose.position.z = uav2_current_local_pos.pose.position.z;
+            case WAYPOINT:
+                if (!way_points.empty()) {
+                    target_pos_ = way_points.back();
+                    if (pos_reached(uav2_current_local_pos,target_pos_)) {
+                        way_points.pop_back();
+                        ROS_INFO("Finished one way point = (%.2f, %.2f, %.2f)",
+                                target_pos_.pose.position.x, target_pos_.pose.position.y, target_pos_.pose.position.z);
+                    }
+                } else {
+                    state_ = LAND;
+                }
 
-    uav4_target_pose.pose.position.x = uav2_target_pose.pose.position.x;
-    uav4_target_pose.pose.position.y = uav2_target_pose.pose.position.y;
-    uav4_target_pose.pose.position.z = uav2_current_local_pos.pose.position.z;
+                break;
 
-    ROS_INFO("uav1_target_pose.x = %.2f, uav1_target_pose.y = %.2f, z = %.2f",
-            uav1_target_pose.pose.position.x, uav1_target_pose.pose.position.y, uav1_target_pose.pose.position.z);
-//    ROS_INFO("uav2_target_pose.x = %.2f, uav2_target_pose.y = %.2f", uav2_target_pose.pose.position.x, uav2_target_pose.pose.position.y);
-//    ROS_INFO("uav3_target_pose.x = %.2f, uav3_target_pose.y = %.2f", uav3_target_pose.pose.position.x, uav3_target_pose.pose.position.y);
-//    ROS_INFO("uav4_target_pose.x = %.2f, uav3_target_pose.y = %.2f", uav4_target_pose.pose.position.x, uav4_target_pose.pose.position.y);
+            case LAND:
+                target_pos_.pose.position.x = 0;
+                target_pos_.pose.position.y = 0;
+                target_pos_.pose.position.z = 0;
+                is_offboard = true;
+
+                if (pos_reached(uav2_current_local_pos,target_pos_)) {
+                    ROS_INFO("reached the land");
+                    mavros_msgs::SetMode land_set_mode;
+                    land_set_mode.request.custom_mode = "AUTO.LAND";
+
+                    if ((uav1_current_state.mode != "AUTO.LAND" || uav3_current_state.mode != "AUTO.LAND" ||
+                         uav4_current_state.mode != "AUTO.LAND") ) {
+                        if( uav1_set_mode_client.call(land_set_mode) &&
+                            land_set_mode.response.mode_sent){
+                            uav2_set_mode_client.call(land_set_mode);
+                            uav3_set_mode_client.call(land_set_mode);
+                            uav4_set_mode_client.call(land_set_mode);
+                            ROS_INFO("Land enabled");
+                        }
+                    }
+                }
+
+                break;
+        }
+
+        // uav2 is the head drone.
+        uav2_target_pose = target_pos_;
+    }
+
+/*    ROS_INFO("target pos = %.2f, %.2f, %.2f", target_pos_.pose.position.x,
+             target_pos_.pose.position.y, target_pos_.pose.position.z);*/
+    uav1_target_pose.pose.position = uav2_target_pose.pose.position;
+    uav3_target_pose.pose.position = uav2_target_pose.pose.position;
+    uav4_target_pose.pose.position = uav2_target_pose.pose.position;
 
     uav1_local_pos_pub.publish(uav1_target_pose);
     uav2_local_pos_pub.publish(uav2_target_pose);
@@ -167,11 +235,10 @@ int main(int argc, char **argv)
     ros::Time last_request = ros::Time::now();
     int count = 0;
 
-
     while(ros::ok()){
         if( (m_multi.uav1_current_state.mode != "OFFBOARD" || m_multi.uav3_current_state.mode != "OFFBOARD" ||
                 m_multi.uav4_current_state.mode != "OFFBOARD") &&
-            (ros::Time::now() - last_request > ros::Duration(5.0))){
+            (ros::Time::now() - last_request > ros::Duration(5.0)) && !m_multi.is_offboard){
             if( m_multi.uav1_set_mode_client.call(offb_set_mode) &&
                 offb_set_mode.response.mode_sent){
                 m_multi.uav2_set_mode_client.call(offb_set_mode);
@@ -182,7 +249,7 @@ int main(int argc, char **argv)
             last_request = ros::Time::now();
         } else {
             if( ! m_multi.uav1_current_state.armed &&
-                (ros::Time::now() - last_request > ros::Duration(5.0))){
+                (ros::Time::now() - last_request > ros::Duration(5.0)) && !m_multi.is_offboard){
                 if( m_multi.uav1_arming_client.call(arm_cmd) &&
                     arm_cmd.response.success){
                     m_multi.uav2_arming_client.call(arm_cmd);
