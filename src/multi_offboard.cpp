@@ -47,6 +47,14 @@ void MultiOffboard::uav4_local_pos_cb(const geometry_msgs::PoseStamped::ConstPtr
     uav4_current_local_pos = *msg;
 }
 
+void MultiOffboard::uav5_local_pos_cb(const geometry_msgs::PoseStamped::ConstPtr& msg){
+    uav5_current_local_pos = *msg;
+}
+
+void MultiOffboard::uav2_local_pos_sp_cb(const mavros_msgs::PositionTarget::ConstPtr& msg) {
+    uav2_current_local_pos_sp = *msg;
+}
+
 bool MultiOffboard::pos_reached(geometry_msgs::PoseStamped current_pos, geometry_msgs::PoseStamped target_pos){
     float err_px = current_pos.pose.position.x - target_pos.pose.position.x;
     float err_py = current_pos.pose.position.y - target_pos.pose.position.y;
@@ -55,7 +63,7 @@ bool MultiOffboard::pos_reached(geometry_msgs::PoseStamped current_pos, geometry
     return sqrt(err_px * err_px + err_py * err_py + err_pz * err_pz) < 0.8f;
 }
 
-void MultiOffboard::add_way_points() {
+void MultiOffboard::uav_add_way_points() {
     geometry_msgs::PoseStamped way_point;
 
     way_point.pose.position.x = 0;
@@ -78,6 +86,11 @@ void MultiOffboard::add_way_points() {
     way_point.pose.position.z = 15;
     way_points.push_back(way_point);
 
+    way_point.pose.position.x = 0;
+    way_point.pose.position.y = 0;
+    way_point.pose.position.z = 15;
+    way_points.push_back(way_point);
+
     std::reverse(way_points.begin(), way_points.end());
 }
 
@@ -92,7 +105,7 @@ void MultiOffboard::targte_local_pos() {
 
                 if (pos_reached(uav2_current_local_pos, target_pos_)){
                     state_ = WAYPOINT;
-                    add_way_points();
+                    uav_add_way_points();
                     ROS_INFO("Finish takeoff");
                 }
                 break;
@@ -116,6 +129,7 @@ void MultiOffboard::targte_local_pos() {
                 target_pos_.pose.position.y = 0;
                 target_pos_.pose.position.z = 0;
                 is_offboard = true;
+                is_armed = true;
 
                 if (pos_reached(uav2_current_local_pos,target_pos_)) {
                     ROS_INFO("reached the land");
@@ -129,6 +143,7 @@ void MultiOffboard::targte_local_pos() {
                             uav2_set_mode_client.call(land_set_mode);
                             uav3_set_mode_client.call(land_set_mode);
                             uav4_set_mode_client.call(land_set_mode);
+                            // init
                             ROS_INFO("Land enabled");
                         }
                     }
@@ -139,6 +154,22 @@ void MultiOffboard::targte_local_pos() {
 
         // uav2 is the head drone.
         uav2_target_pose = target_pos_;
+    } else {
+        uav2_target_pose.pose.position = uav2_current_local_pos_sp.position;
+        mavros_msgs::SetMode land_set_mode;
+//        mavros_msgs::SetMode return_set_mode;
+        land_set_mode.request.custom_mode = "AUTO.LAND";
+
+        if ((uav1_current_state.mode != "AUTO.LAND" || uav3_current_state.mode != "AUTO.LAND" ||
+             uav4_current_state.mode != "AUTO.LAND") && uav2_current_state.mode == "AUTO.LAND" && is_armed) {
+            if( uav1_set_mode_client.call(land_set_mode) &&
+                land_set_mode.response.mode_sent){
+                uav2_set_mode_client.call(land_set_mode);
+                uav3_set_mode_client.call(land_set_mode);
+                uav4_set_mode_client.call(land_set_mode);
+                ROS_INFO("Land enabled out");
+            }
+        }
     }
 
 /*    ROS_INFO("target pos = %.2f, %.2f, %.2f", target_pos_.pose.position.x,
@@ -191,6 +222,8 @@ void MultiOffboard::Oninit() {
             ("uav2/mavros/setpoint_position/local", 5);
     uav2_local_position_sub = nh.subscribe<geometry_msgs::PoseStamped>
             ("uav2/mavros/local_position/pose", 10, &MultiOffboard::uav2_local_pos_cb, this);
+    uav2_local_pos_sp_sub = nh.subscribe<mavros_msgs::PositionTarget>
+            ("uav2/mavros/setpoint_raw/target_local", 10, &MultiOffboard::uav2_local_pos_sp_cb, this);
 
     uav3_set_mode_client = nh.serviceClient<mavros_msgs::SetMode>
             ("uav3/mavros/set_mode");
@@ -209,6 +242,19 @@ void MultiOffboard::Oninit() {
             ("uav4/mavros/setpoint_position/local", 5);
     uav4_local_position_sub = nh.subscribe<geometry_msgs::PoseStamped>
             ("uav4/mavros/local_position/pose", 10, &MultiOffboard::uav4_local_pos_cb, this);
+
+    uav5_set_mode_client = nh.serviceClient<mavros_msgs::SetMode>
+            ("uav5/mavros/set_mode");
+    uav5_arming_client = nh.serviceClient<mavros_msgs::CommandBool>
+            ("uav5/mavros/cmd/arming");
+    uav5_local_pos_pub = nh.advertise<geometry_msgs::PoseStamped>
+            ("uav5/mavros/setpoint_position/local", 5);
+    uav5_local_position_sub = nh.subscribe<geometry_msgs::PoseStamped>
+            ("uav5/mavros/local_position/pose", 10, &MultiOffboard::uav5_local_pos_cb, this);
+
+    state_ = TAKEOFF;
+    is_offboard = false;
+    is_armed = false;
 }
 
 int main(int argc, char **argv)
@@ -244,17 +290,19 @@ int main(int argc, char **argv)
                 m_multi.uav2_set_mode_client.call(offb_set_mode);
                 m_multi.uav3_set_mode_client.call(offb_set_mode);
                 m_multi.uav4_set_mode_client.call(offb_set_mode);
+                m_multi.is_offboard = true;
                 ROS_INFO("Offboard enabled");
             }
             last_request = ros::Time::now();
         } else {
             if( ! m_multi.uav1_current_state.armed &&
-                (ros::Time::now() - last_request > ros::Duration(5.0)) && !m_multi.is_offboard){
+                (ros::Time::now() - last_request > ros::Duration(5.0)) && !m_multi.is_armed){
                 if( m_multi.uav1_arming_client.call(arm_cmd) &&
                     arm_cmd.response.success){
                     m_multi.uav2_arming_client.call(arm_cmd);
                     m_multi.uav3_arming_client.call(arm_cmd);
                     m_multi.uav4_arming_client.call(arm_cmd);
+                    m_multi.is_armed = true;
                     ROS_INFO("Vehicle armed");
                 }
                 last_request = ros::Time::now();

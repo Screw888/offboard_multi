@@ -11,6 +11,7 @@
             /uav2/mavros/vfr_hud
             /uav2/mavros/setpoint_position/local
             /uav2/mavros/local_position/pose
+            /uav2/mavros/setpoint_raw/target_local
 
             /uav3/mavros/state
             /uav3/mavros/vfr_hud
