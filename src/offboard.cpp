@@ -43,7 +43,7 @@ bool pos_reached(geometry_msgs::PoseStamped current_pos, geometry_msgs::PoseStam
     float err_py = current_pos.pose.position.y - target_pos.pose.position.y;
     float err_pz = current_pos.pose.position.z - target_pos.pose.position.z;
 
-    return sqrt(err_px * err_px + err_py * err_py + err_pz * err_pz) > 1.0f;
+    return sqrt(err_px * err_px + err_py * err_py + err_pz * err_pz) < 2.0f;
 }
 
 int main(int argc, char **argv)
@@ -83,23 +83,32 @@ int main(int argc, char **argv)
     geometry_msgs::PoseStamped pose;
     pose.pose.position.x = 10;
     pose.pose.position.y = 10;
-//    pose.pose.position.z = 3;
     pose.pose.position.z = 0;
 
-/*    pose.pose.orientation.x = 1;
-    pose.pose.orientation.y = 1;
-    pose.pose.orientation.z = 1;
-    pose.pose.orientation.w = 1;*/
+    std::vector<geometry_msgs::PoseStamped> usv_way_points;
+    geometry_msgs::PoseStamped way_point;
 
-    geometry_msgs::PoseStamped pose1;
-    pose1.pose.position.x = 5;
-    pose1.pose.position.y = 5;
-    pose1.pose.position.z = 5;
+    way_point.pose.position.x = 30;
+    way_point.pose.position.y = 40;
+    way_point.pose.position.z = 0;
+    usv_way_points.push_back(way_point);
 
-    geometry_msgs::PoseStamped pose2;
-    pose1.pose.position.x = -5;
-    pose1.pose.position.y = 5;
-    pose1.pose.position.z = 5;
+    way_point.pose.position.x = -30;
+    way_point.pose.position.y = 40;
+    way_point.pose.position.z = 0;
+    usv_way_points.push_back(way_point);
+
+    way_point.pose.position.x = -30;
+    way_point.pose.position.y = -30;
+    way_point.pose.position.z = 0;
+    usv_way_points.push_back(way_point);
+
+    way_point.pose.position.x = 0;
+    way_point.pose.position.y = 0;
+    way_point.pose.position.z = 0;
+    usv_way_points.push_back(way_point);
+
+    std::reverse(usv_way_points.begin(), usv_way_points.end());
     
 
     geometry_msgs::TwistStamped vel_cmd;
@@ -111,12 +120,7 @@ int main(int argc, char **argv)
     vel_cmd.twist.angular.y = 0.2;
     vel_cmd.twist.angular.z = 0.5;
 
-    //send a few setpoints before starting
-/*    for(int i = 100; ros::ok() && i > 0; --i){
-        local_pos_pub.publish(pose);
-        ros::spinOnce();
-        rate.sleep();
-    }*/
+
 
     mavros_msgs::SetMode offb_set_mode;
     offb_set_mode.request.custom_mode = "OFFBOARD";
@@ -133,7 +137,6 @@ int main(int argc, char **argv)
         global_pos_pub.publish(gps_pos);*/
 //        g_speed_control_pub.publish(vel_cmd);
 
-        ROS_INFO("publish");
 
         if( current_state.mode != "OFFBOARD" &&
             (ros::Time::now() - last_request > ros::Duration(5.0))){
@@ -153,8 +156,24 @@ int main(int argc, char **argv)
             }
         }
 
-        local_pos_pub.publish(pose);
+        if (!usv_way_points.empty()) {
+            way_point = usv_way_points.back();
+            if (pos_reached(current_local_pos, usv_way_points.back())) {
+                ROS_INFO("Finished one way point = (%.2f, %.2f, %.2f)",
+                         usv_way_points.back().pose.position.x, usv_way_points.back().pose.position.y,
+                         usv_way_points.back().pose.position.z);
+                usv_way_points.pop_back();
 
+                if (!usv_way_points.empty()) {
+                    ROS_INFO("Goto next way point = (%.2f, %.2f, %.2f)",
+                             usv_way_points.back().pose.position.x, usv_way_points.back().pose.position.y,
+                             usv_way_points.back().pose.position.z);
+                } else {
+                    ROS_INFO("Finish all target points!");
+                }
+            }
+        }
+        local_pos_pub.publish(way_point);
         ros::spinOnce();
         rate.sleep();
     }
